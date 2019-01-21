@@ -1,0 +1,103 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Locust Elastic Beanstalk Stack'
+
+Parameters: 
+  TargetUrl: 
+    Type: String
+    MinLength: 1
+    Description: The host name to load test
+  LocustFilePath:
+    Type: String
+    Default: '/locust/locustfile.py'
+
+Resources:
+  LocustApplication:          
+    Type: 'AWS::ElasticBeanstalk::Application'
+    Properties:
+      ApplicationName: 'locust2'
+      Description: 'Locust load testing'
+
+  MasterInstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Roles:
+      - !Ref MasterRole
+  MasterRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - 'ec2.amazonaws.com'
+          Action:
+          - 'sts:AssumeRole'
+      Policies:
+      - PolicyName: cloudwatch
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action: 'cloudwatch:PutMetricData'
+            Resource: '*'
+      - PolicyName: 's3-elasticbeanstalk'
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - 's3:Get*'
+            - 's3:List*'
+            - 's3:PutObject'
+            Resource:
+            - !Sub 'arn:aws:s3:::locust-${AWS::AccountId}/*'
+
+  EBMasterConfigurationTemplate:
+    Type: 'AWS::ElasticBeanstalk::ConfigurationTemplate'
+    Properties:
+      ApplicationName: !Ref LocustApplication
+      SolutionStackName: '64bit Amazon Linux 2018.03 v2.12.6 running Docker 18.06.1-ce'
+      OptionSettings:
+        - Namespace: aws:elasticbeanstalk:environment
+          OptionName: EnvironmentType
+          Value: SingleInstance
+        - Namespace: 'aws:autoscaling:launchconfiguration'
+          OptionName: 'IamInstanceProfile'
+          Value: !Ref MasterInstanceProfile
+        - Namespace: 'aws:elasticbeanstalk:environment:process:default'
+          OptionName: 'Port'
+          Value: 8089
+        - Namespace: 'aws:elasticbeanstalk:application:Environment'
+          OptionName: 'LOCUST_MODE'
+          Value: 'master'
+        - Namespace: 'aws:elasticbeanstalk:application:Environment'
+          OptionName: 'TARGET_URL'
+          Value: !Ref TargetUrl
+        - Namespace: 'aws:elasticbeanstalk:application:Environment'
+          OptionName: 'LOCUSTFILE_PATH'
+          Value: !Ref LocustFilePath
+
+  EBMasterApplicationVersion:
+    Type: 'AWS::ElasticBeanstalk::ApplicationVersion'
+    Properties:
+      ApplicationName: !Ref LocustApplication
+      Description: !Sub "${LocustApplication}-Master"
+      SourceBundle:
+        S3Bucket: !Sub locust-${AWS::AccountId}
+        S3Key: 'locust.zip'
+      
+  EBMasterEnvironment:
+    Type: 'AWS::ElasticBeanstalk::Environment'
+    Properties:
+      ApplicationName: !Ref LocustApplication
+      Description: 'Locust master'
+      TemplateName: !Ref EBMasterConfigurationTemplate
+      VersionLabel: !Ref EBMasterApplicationVersion
+
+Outputs:
+  EndpointURL:
+    Value: !Sub 'http://${EBMasterEnvironment.EndpointURL}'
+    Description: Locust Master URL
